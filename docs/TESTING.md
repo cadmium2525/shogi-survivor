@@ -80,6 +80,17 @@ npm run test:browser
 - 既存の `dist/` を更新するビルドが、変換後に終了コード1で止まる事象があった。`--emptyOutDir false` で生成できることを確認後、削除先の絶対パスが作業フォルダ内の `dist/` であることを確認し、この生成物だけを削除。標準の `npm run build` を改めて実行して成功した。GitHub Actionsはクリーンなチェックアウトからビルドする構成。
 - Word文書を受け取る前の仮実装と古いテストへの参照は正式仕様へ置き換え、改めて全件を検証した。
 
-## 開発環境外の確認
+## GitHub Pagesでの公開確認
 
-実際のGitHub Pagesへの公開とスマートフォン実機での確認は別途必要。公開URLで、縦画面のタップ、ページ再読込、全5戦の画面遷移を確認する。
+2026-10-17、指定された公開リポジトリ `cadmium2525/shogi-survivor` へ実装をpushし、Pagesの `build_type=workflow` を有効化。HTTPSでの公開と本番ブラウザテストに成功。
+
+- 公開URL： https://cadmium2525.github.io/shogi-survivor/
+- 成功したActions実行： https://github.com/cadmium2525/shogi-survivor/actions/runs/38996122196
+- 検証したアプリのコミット： `abf253df658f13e9d1d3ab065d092b2ed08b9d20`
+- GitHub Actionsの `build` と `deploy` がともに成功。標準Ubuntu runner・Node.js 24を使用。
+- `TEST_URL=https://cadmium2525.github.io/shogi-survivor/` として `npm run test:browser` を実行し、320 / 390 / 768 / 1440pxで横はみ出しなし。
+- 本番ページで配置・控え・交換・王必須・危険マス、一時停止・1手送り・速度切替、再読込後の保存復元を確認。
+- 実際のAIによる全5戦（9 / 53 / 9 / 5 / 9半手）と最終報酬後の所持駒7枚でのクリア、敗北からの再挑戦を確認。JavaScript・コンソールエラーなし。
+- 無料構成の公開リポジトリと標準GitHub-hosted runnerを使用。有料API・専用サーバー・独自ドメインは使用しない。
+
+未確認なのはスマートフォン実機での操作。ブラウザのモバイル相当設定による検証は実施済み。
