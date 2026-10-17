@@ -29,6 +29,31 @@ jobs:
         run: npm test
       - name: Type check and production build
         run: npm run build
+      - name: Install Chromium and WebKit
+        run: npx playwright install --with-deps chromium webkit
+      - name: Start production preview
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 --strictPort > "$RUNNER_TEMP/shogi-preview.log" 2>&1 &
+          node --input-type=module <<'NODE'
+          let ready = false;
+          for (let attempt = 0; attempt < 60; attempt++) {
+            try {
+              if ((await fetch('http://127.0.0.1:4173/')).ok) { ready = true; break; }
+            } catch {}
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          if (!ready) throw new Error('Production preview did not start');
+          NODE
+      - name: Chromium layout and complete campaign
+        run: npm run test:browser
+        env:
+          TEST_URL: http://127.0.0.1:4173/
+          PLAYWRIGHT_BROWSER: chromium
+      - name: WebKit layout and complete campaign
+        run: npm run test:browser
+        env:
+          TEST_URL: http://127.0.0.1:4173/
+          PLAYWRIGHT_BROWSER: webkit
       - name: Upload Pages artifact
         if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5

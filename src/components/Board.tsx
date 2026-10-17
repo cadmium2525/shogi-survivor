@@ -21,7 +21,7 @@ export default function Board({ pieces, selectedId, canDeploy, isPreparing, show
   return <>
     <div className="board-head"><span className="team-label enemy-label"><i />敵陣 <span>{pieces.filter(p => p.side === 'enemy').length}枚</span></span><span className="board-objective">{isPreparing ? '敵の布陣と危険マスを読もう' : '王の捕獲で決着 · 王手・詰みなし'}</span></div>
     <div className="board-frame"><div className="file-labels">{['一', '二', '三', '四', '五'].map(n => <span key={n}>{n}</span>)}</div>
-      <div className="board" aria-label="5列5行の将棋盤">
+      <div className="board-surface"><div className="board" aria-label="5列5行の将棋盤">
         {Array.from({ length: BOARD_SIZE * BOARD_SIZE }, (_, i) => {
           const x = i % BOARD_SIZE, y = Math.floor(i / BOARD_SIZE);
           const piece = pieces.find(p => p.position.x === x && p.position.y === y);
@@ -36,7 +36,7 @@ export default function Board({ pieces, selectedId, canDeploy, isPreparing, show
             {threatened && !piece && <span className="threat-mark" aria-hidden="true">×</span>}
           </button>;
         })}
-      </div>
+      </div></div>
       <div className="rank-labels">{['一', '二', '三', '四', '五'].map(n => <span key={n}>{n}</span>)}</div>
     </div>
     <div className="board-foot"><span className="team-label"><i />自陣 <span>{pieces.filter(p => p.side === 'ally').length}枚</span></span><button className={`text-button ${showThreats ? 'on' : ''}`} data-action="threats" aria-pressed={showThreats} onClick={onThreats}><Icon name="eye" />危険マスを{showThreats ? '隠す' : '表示'}</button></div>

@@ -30,11 +30,13 @@ npm run preview
 ブラウザの通しテストは、ビルド後、開発サーバーを起動したまま別ターミナルで実行します。
 
 ```sh
-npx playwright install chromium
+npx playwright install chromium webkit
 npm run test:browser
 ```
 
-接続先は環境変数 `TEST_URL`（既定 `http://127.0.0.1:5173/`）で変更できます。インストール済みのEdgeを使うWindows環境は、PowerShellで `$env:PLAYWRIGHT_CHANNEL='msedge'` を設定するとChromiumの追加取得は不要です。スマホ幅の操作・全5戦のクリア・最終報酬・敗北と再挑戦・途中再開・本番サブパス配信を検証し、`artifacts/` に画面を保存します。
+接続先は環境変数 `TEST_URL`（既定 `http://127.0.0.1:5173/`）で変更できます。インストール済みのEdgeを使うWindows環境は、PowerShellで `$env:PLAYWRIGHT_CHANNEL='msedge'` を設定するとChromiumの追加取得は不要です。Safari系の検証には `$env:PLAYWRIGHT_BROWSER='webkit'` を設定して同じコマンドを実行します。
+
+ブラウザテストは、スマホ幅と縦横切替時の盤面25マス・駒・文字の実寸と配置を検証します。全5戦のクリア・最終報酬・敗北と再挑戦・途中再開・本番サブパス配信も確認し、`artifacts/` にブラウザ別の画面を保存します。GitHub ActionsでもChromiumとWebKitの両方を通ってから公開します。
 
 ## 遊び方
 
