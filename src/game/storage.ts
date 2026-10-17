@@ -1,11 +1,11 @@
 import { MAX_DEPLOYED, MAX_HALF_TURNS, MAX_ON_BOARD } from './types.ts';
-import type { RunState } from './types.ts';
+import type { GameEvent, RunState } from './types.ts';
 
 export const SAVE_KEY = 'shogi-survivor-save-v2';
 const TYPES = ['king', 'pawn', 'gold', 'rook'];
 const ABILITIES = ['iron', 'combo', 'split'];
 const PHASES = ['prepare', 'battle', 'reward', 'victory', 'defeat'];
-const EVENTS = ['moved', 'captured', 'shieldBlocked', 'summoned', 'flipped', 'extraAction', 'passed', 'won', 'lost', 'limit'];
+const EVENTS = ['moved', 'captured', 'promoted', 'shieldBlocked', 'summoned', 'flipped', 'extraAction', 'passed', 'won', 'lost', 'limit'];
 type Data = Record<string, unknown>;
 const object = (value: unknown): value is Data => value !== null && typeof value === 'object' && !Array.isArray(value);
 const integer = (value: unknown, min: number, max: number): value is number => typeof value === 'number'
@@ -30,7 +30,7 @@ function validRun(value: unknown): value is RunState {
   for (const piece of value.inventory) {
     if (!object(piece) || !string(piece.id) || !/^ally-[1-7]$/.test(piece.id)
       || Number(piece.id.slice(5)) >= value.nextId || !TYPES.includes(piece.type as string) || !abilities(piece.abilities)
-      || !(piece.position === null || position(piece.position, true))) return false;
+      || piece.promoted !== undefined || !(piece.position === null || position(piece.position, true))) return false;
     inventory.push(piece);
   }
   if (!uniqueIds(inventory) || !uniqueSquares(inventory) || inventory.length !== value.nextId - 1
@@ -60,7 +60,9 @@ function validRun(value: unknown): value is RunState {
   for (const piece of battle.pieces) {
     if (!object(piece) || !string(piece.id) || !TYPES.includes(piece.type as string)
       || !['ally', 'enemy'].includes(piece.side as string) || !position(piece.position) || !abilities(piece.abilities)
-      || typeof piece.shieldUsed !== 'boolean' || typeof piece.isSummoned !== 'boolean') return false;
+      || typeof piece.shieldUsed !== 'boolean' || typeof piece.isSummoned !== 'boolean'
+      || !(piece.promoted === undefined || typeof piece.promoted === 'boolean')
+      || piece.promoted === true && piece.type !== 'pawn' && piece.type !== 'rook') return false;
     pieces.push(piece);
   }
   if (!uniqueIds(pieces) || !uniqueSquares(pieces)
@@ -113,7 +115,19 @@ export function loadRun(): RunState | null {
     const data = globalThis.localStorage.getItem(SAVE_KEY);
     if (!data || data.length > 250000) return null;
     const value: unknown = JSON.parse(data);
-    return validRun(value) ? value : null;
+    if (!validRun(value)) return null;
+    const battle = value.battle;
+    if (value.phase !== 'battle' || !battle || battle.phase !== 'battle') return value;
+    const events: GameEvent[] = [];
+    const pieces = battle.pieces.map((piece) => {
+      if (piece.type !== 'pawn' || piece.promoted !== undefined
+        || piece.position.y !== (piece.side === 'ally' ? 0 : 4)) return piece;
+      events.push({ type: 'promoted', side: piece.side, halfTurn: battle.halfTurn, pieceId: piece.id,
+        to: { ...piece.position }, text: `${piece.side === 'ally' ? '味方' : '敵'}の歩がと金に成りました（旧保存データの移行）。`,
+        reason: '旧仕様で最奥に到達した歩の行動不能を防ぐため自動成り。半手数・能力・盾の状態は維持します。' });
+      return { ...piece, promoted: true };
+    });
+    return events.length ? { ...value, battle: { ...battle, pieces, eventLog: [...battle.eventLog, ...events] } } : value;
   } catch { return null; }
 }
 

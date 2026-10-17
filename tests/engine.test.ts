@@ -241,7 +241,7 @@ describe('one global Othello scan', () => {
       piece('left', 'pawn', 'ally', 0, 1), piece('right', 'gold', 'ally', 2, 1)],
       [ek(), piece('flip', 'pawn', 'enemy', 1, 1)], ['othello']);
     const n = move(s, 'r', 4, 0);
-    expect(types(n)).toEqual(['captured', 'summoned', 'flipped', 'won']);
+    expect(types(n)).toEqual(['captured', 'promoted', 'summoned', 'flipped', 'won']);
     expect(n.winner).toBe('ally');
     expect(n.pendingExtraAction).toBe(false);
   });

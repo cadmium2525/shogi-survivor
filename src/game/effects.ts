@@ -1,12 +1,26 @@
-import { PIECES } from './catalog.ts';
-import { DIRECTIONS, isOnBoard, samePosition } from './moves.ts';
+import { getPieceInfo } from './catalog.ts';
+import { DIRECTIONS, isOnBoard, isPromotionZone, samePosition } from './moves.ts';
 import { MAX_ON_BOARD } from './types.ts';
 import type { Action, GameEvent, GameState, Piece, Side } from './types.ts';
 
 export const otherSide = (side: Side): Side => side === 'ally' ? 'enemy' : 'ally';
 export const clonePiece = (piece: Piece): Piece => ({ ...piece, position: { ...piece.position }, abilities: [...piece.abilities] });
 export const hasShield = (piece: Piece): boolean => piece.abilities.includes('iron') && !piece.shieldUsed;
-const name = (piece: Piece): string => `${piece.side === 'ally' ? '味方' : '敵'}の${PIECES[piece.type].label}`;
+const name = (piece: Piece): string => `${piece.side === 'ally' ? '味方' : '敵'}の${getPieceInfo(piece).label}`;
+
+function promote(piece: Piece, state: GameState, explanation: string): void {
+  if (piece.promoted || (piece.type !== 'pawn' && piece.type !== 'rook')) return;
+  const before = getPieceInfo(piece).name;
+  piece.promoted = true;
+  state.eventLog.push({ type: 'promoted', side: piece.side, halfTurn: state.halfTurn, pieceId: piece.id,
+    to: { ...piece.position }, text: `${piece.side === 'ally' ? '味方' : '敵'}の${before}が${getPieceInfo(piece).name}に成った。${explanation}` });
+}
+
+function promoteStrandedPawn(piece: Piece, state: GameState): void {
+  if (piece.type === 'pawn' && isPromotionZone(piece.side, piece.position)) {
+    promote(piece, state, '最奥の歩が動けなくなるのを防ぐ自動成り。');
+  }
+}
 
 /** Collect every bracket from one board snapshot; converted pieces never start another scan. */
 export function othelloTargets(pieces: Piece[], side: Side): Piece[] {
@@ -34,7 +48,7 @@ export function othelloTargets(pieces: Piece[], side: Side): Piece[] {
 
 export interface MoveResolution { state: GameState; actor: Piece; captured: Piece | null }
 
-/** Resolve shield/movement/capture → split → one global flip. No AI, turn switch, or winner check. */
+/** Resolve shield/movement/capture → promotion → split → one global flip. No AI or turn switch. */
 export function resolveMove(source: GameState, action: Extract<Action, { type: 'move' }>, reason?: string): MoveResolution {
   const state: GameState = { ...source, pieces: source.pieces.map(clonePiece), relics: [...source.relics], eventLog: [...source.eventLog] };
   const actor = state.pieces.find(piece => piece.id === action.pieceId)!;
@@ -56,15 +70,19 @@ export function resolveMove(source: GameState, action: Extract<Action, { type: '
       state.eventLog.push({ ...base, type: 'moved', text: `${name(actor)}が${to.x + 1}列${to.y + 1}段へ移動。` });
     }
     actor.position = to;
+    if (isPromotionZone(actor.side, from) || isPromotionZone(actor.side, to)) {
+      promote(actor, state, '敵陣の最奥への出入りで自動成り。');
+    }
     if (captured && actor.abilities.includes('split')
       && state.pieces.filter(piece => piece.side === actor.side).length < MAX_ON_BOARD
       && !state.pieces.some(piece => samePosition(piece.position, from))) {
       let id: string;
       do { id = `summon-${state.nextId++}`; } while (state.pieces.some(piece => piece.id === id));
-      const pawn: Piece = { id, type: 'pawn', side: actor.side, position: { ...from }, abilities: [], shieldUsed: false, isSummoned: true };
+      const pawn: Piece = { id, type: 'pawn', side: actor.side, position: { ...from }, abilities: [], shieldUsed: false, isSummoned: true, promoted: false };
       state.pieces.push(pawn);
       state.eventLog.push({ type: 'summoned', side: actor.side, halfTurn: state.halfTurn, pieceId: actor.id,
         targetId: pawn.id, to: { ...from }, text: `分裂！ 移動元に${name(pawn)}を召喚。` });
+      promoteStrandedPawn(pawn, state);
     }
   }
   if (state.relics.includes('othello')) {
@@ -72,8 +90,9 @@ export function resolveMove(source: GameState, action: Extract<Action, { type: '
     for (const flipped of othelloTargets(state.pieces, actor.side).slice(0, room)) {
       flipped.side = actor.side;
       const event: GameEvent = { type: 'flipped', side: actor.side, halfTurn: state.halfTurn,
-        targetId: flipped.id, to: { ...flipped.position }, text: `オセロの法則！ ${PIECES[flipped.type].label}が${actor.side === 'ally' ? '味方' : '敵'}に反転。` };
+        targetId: flipped.id, to: { ...flipped.position }, text: `オセロの法則！ ${getPieceInfo(flipped).label}が${actor.side === 'ally' ? '味方' : '敵'}に反転。` };
       state.eventLog.push(event);
+      promoteStrandedPawn(flipped, state);
     }
   }
   return { state, actor, captured };

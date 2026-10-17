@@ -25,6 +25,30 @@ const cell = (x, y) => page.locator(`[data-action="cell"][data-x="${x}"][data-y=
 const screenshot = (name, fullPage = false) => page.screenshot({ path: `artifacts/${name}-${browserName}.png`, fullPage });
 async function noOverflow() { assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'horizontal overflow'); }
 async function reset() { await action('new').click(); await action('confirm-new').click(); }
+async function inspectPromotion(current, promoted, restore = false) {
+  assert.equal(promoted.promoted, true);
+  const name = promoted.type === 'pawn' ? 'と金' : '龍王';
+  const glyph = promoted.type === 'pawn' ? 'と' : '龍';
+  const showResultAgain = current.phase === 'reward';
+  if (showResultAgain) await action('hide-result').click();
+  const square = cell(promoted.position.x, promoted.position.y);
+  assert.match(await square.getAttribute('aria-label'), new RegExp(name));
+  assert.equal(await square.locator('.piece-wrap.promoted .piece-character').innerText(), glyph);
+  await square.click();
+  assert.equal(await page.locator('.inspector-title strong').innerText(), name);
+  assert.ok(await page.locator('.move-dot').count() > 0, 'promoted piece has legal movement hints');
+  assert.ok(await page.locator('.event-promoted').count() > 0, 'promotion is visible in action log');
+  await noOverflow();
+  await assertBoardGeometry(`${name} promotion`, current.battle.pieces.length);
+  await screenshot(`formal-promotion-${promoted.type}`, true);
+  if (restore) {
+    await page.reload();
+    assert.deepEqual((await state()).battle, current.battle, 'restore promotion, effects and exact action log');
+    assert.match(await action('pause').innerText(), /戦闘を再開/);
+    assert.equal(await cell(promoted.position.x, promoted.position.y).locator('.promoted .piece-character').innerText(), glyph);
+  }
+  if (showResultAgain) await action('show-result').click();
+}
 
 // DOM counts alone cannot detect collapsed grid rows or invisible pieces. Measure the rendered board.
 async function assertBoardGeometry(label, expectedPieces = 4) {
@@ -211,6 +235,7 @@ try {
   assert.equal(await action('threats').getAttribute('aria-pressed'), 'false');
   await action('help').click();
   assert.equal(await page.locator('[role="dialog"]').count(), 1);
+  assert.match(await page.locator('[role="dialog"]').innerText(), /歩→と金（金の動き）、飛車→龍王/);
   await page.keyboard.press('Tab');
   assert.equal(await page.evaluate(() => !!document.activeElement.closest('[role="dialog"]')), true);
   await page.keyboard.press('Escape');
@@ -242,14 +267,50 @@ try {
   // Full campaign, using only visible controls and genuine AI outcomes.
   // The fixture is a chosen strategy, not a fabricated save or a forced win.
   const campaign = [];
+  const inspectedPromotions = new Set();
+  let restoredPromotion = false;
   const choices = ['rook', 'rook', 'rook', 'rook', 'rook'];
+  // A real initial deployment that advances a pawn to the last rank before the battle ends.
+  await page.locator('[data-action="select"][data-id="ally-1"]').click();
+  await cell(0, 3).click();
+  await page.locator('[data-action="select"][data-id="ally-2"]').click();
+  await cell(1, 3).click();
+  await action('start').click();
+  await action('pause').click();
+  let pawnPromotion = null;
+  while ((await state()).phase === 'battle') {
+    await action('step').click();
+    const current = await state();
+    pawnPromotion = current.battle.pieces.find(p => p.id === 'ally-2' && p.promoted);
+    if (pawnPromotion) {
+      assert.equal(current.phase, 'battle', 'pawn promotion is observed before battle completion');
+      await inspectPromotion(current, pawnPromotion, true);
+      inspectedPromotions.add('pawn');
+      restoredPromotion = true;
+      break;
+    }
+  }
+  assert.ok(pawnPromotion, 'deployed pawn reaches the last rank and becomes a tokin');
+  await reset();
   for (let encounter = 0; encounter < 5; encounter++) {
     assert.equal((await state()).phase, 'prepare');
     await action('arrange').click();
     await action('start').click();
-    await action('fast-forward').click();
+    await action('pause').click();
+    // Observe real AI promotions one half-turn at a time; never fabricate a battle/save.
+    while ((await state()).phase === 'battle' && inspectedPromotions.size < 2) {
+      await action('step').click();
+      const current = await state();
+      const event = current.battle.eventLog.find(e => e.type === 'promoted' && e.halfTurn === current.battle.halfTurn);
+      const promoted = event && current.battle.pieces.find(p => p.id === event.pieceId);
+      if (!promoted || inspectedPromotions.has(promoted.type)) continue;
+      await inspectPromotion(current, promoted);
+      inspectedPromotions.add(promoted.type);
+    }
+    if ((await state()).phase === 'battle') await action('fast-forward').click();
     const result = await state();
-    campaign.push({ stage: encounter + 1, winner: result.battle.winner, halfTurns: result.battle.halfTurn, endReason: result.battle.endReason });
+    campaign.push({ stage: encounter + 1, winner: result.battle.winner, halfTurns: result.battle.halfTurn,
+      endReason: result.battle.endReason, promotions: result.battle.eventLog.filter(e => e.type === 'promoted').length });
     assert.equal(result.phase, 'reward', `campaign failed: ${JSON.stringify(campaign)}`);
     assert.equal(result.inventory.length, encounter + 2, 'no growth until a piece is chosen');
     assert.equal(result.rewardChoices.length, 3);
@@ -261,6 +322,8 @@ try {
     if (encounter < 4) assert.equal((await state()).phase, 'prepare');
   }
   assert.equal((await state()).phase, 'victory');
+  assert.deepEqual([...inspectedPromotions].sort(), ['pawn', 'rook'], 'real battles render both promotion types');
+  assert.equal(restoredPromotion, true, 'promoted battle resumes after reload');
   assert.equal((await state()).victories, 5);
   assert.equal((await state()).inventory.length, 7, 'final victory also awards a piece');
   assert.ok((await state()).inventory.filter(p => p.position).length <= 6);
@@ -309,7 +372,8 @@ try {
     assert.equal((await state()).phase, 'reward');
   } finally { await new Promise(resolve => server.close(resolve)); }
   assert.deepEqual(errors, [], 'browser runtime/resource errors');
-  console.log(JSON.stringify({ passed: true, browser: browserName, viewports, safeAreas, campaign, finalInventory: 7, productionSubpath: prefix,
+  console.log(JSON.stringify({ passed: true, browser: browserName, viewports, safeAreas, campaign, inspectedPromotions: [...inspectedPromotions],
+    restoredPromotion, finalInventory: 7, productionSubpath: prefix,
     browserErrors: errors, artifacts: `artifacts/formal-*-${browserName}.png` }, null, 2));
 } catch (error) {
   await screenshot('formal-failure', true).catch(() => {});

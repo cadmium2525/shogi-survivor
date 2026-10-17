@@ -120,6 +120,8 @@ h1 { font: 700 28px/1.45 var(--serif); letter-spacing: .08em; margin-top: 5px; }
 .enemy .piece { transform: rotate(180deg); background: linear-gradient(112deg, #f5dfb5 0%, #ddbd89 65%, #c6985d 100%); }
 .enemy .piece::before { background: linear-gradient(120deg, #efd7a9, #d9b77c); }
 .enemy .piece-character { color: #943c2c; }
+.piece-wrap.promoted .piece-character { color: #a13c2b; }
+.piece-wrap.promoted .piece-engraving { opacity: .7; }
 .piece-abilities { position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; z-index: 4; }
 .ability-badge { display: inline-grid; place-items: center; background: #738b9d; color: #fff; width: 15px; height: 15px; border-radius: 50%; font: 8px/1 var(--serif); border: 1px solid #faf6e2; flex-shrink: 0; }
 .ability-iron { background: #738b9d; }
@@ -223,6 +225,7 @@ h1 { font: 700 28px/1.45 var(--serif); letter-spacing: .08em; margin-top: 5px; }
 .event-shieldBlocked .log-dot { background: #7193a7; }
 .event-flipped .log-dot { background: #a37ca0; }
 .event-summoned .log-dot { background: #7c9063; }
+.event-promoted .log-dot { background: #b77b32; }
 .relic-unlock { display: flex; gap: 12px; align-items: center; background: #eee3ea; border: 1px solid #dbc9d4; color: #967a90; padding: 14px; text-align: left; margin-top: 20px; }
 .relic-unlock b, .relic-unlock small { display: block; }
 .relic-unlock b { font-size: 10px; font-weight: 500; }

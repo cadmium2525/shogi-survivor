@@ -16,10 +16,12 @@ export interface Piece {
   abilities: Ability[];
   shieldUsed: boolean;
   isSummoned: boolean;
+  /** Promotion lasts for the battle; omitted in older saves means unpromoted. */
+  promoted?: boolean;
 }
 export type Action = { type: 'move'; pieceId: string; to: Position } | { type: 'pass' };
 export interface ActionDecision { action: Action; score: number; reason: string }
-export type EventType = 'moved' | 'captured' | 'shieldBlocked' | 'summoned' | 'flipped' | 'extraAction' | 'passed' | 'won' | 'lost' | 'limit';
+export type EventType = 'moved' | 'captured' | 'promoted' | 'shieldBlocked' | 'summoned' | 'flipped' | 'extraAction' | 'passed' | 'won' | 'lost' | 'limit';
 export interface GameEvent {
   type: EventType;
   side: Side;

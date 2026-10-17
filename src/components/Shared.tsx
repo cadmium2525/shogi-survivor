@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ABILITIES, PIECES } from '../game/catalog.ts';
+import { ABILITIES, getPieceInfo } from '../game/catalog.ts';
 import type { Ability, PieceType, Side } from '../game/types.ts';
 
 const paths: Record<string, ReactNode> = {
@@ -21,9 +21,11 @@ export function Icon({ name }: { name: string }) {
 export function AbilityBadge({ ability }: { ability: Ability }) {
   return <span className={`ability-badge ability-${ability}`} title={`${ABILITIES[ability].name}: ${ABILITIES[ability].description}`}>{ABILITIES[ability].short}</span>;
 }
-export function PieceToken({ type, side = 'ally', abilities = [], shieldUsed = true, miniature = false }: { type: PieceType; side?: Side; abilities?: Ability[]; shieldUsed?: boolean; miniature?: boolean }) {
-  return <span className={`piece-wrap ${side} ${miniature ? 'miniature' : ''}`} aria-hidden="true">
-    <span className="piece"><span className="piece-character">{PIECES[type].label}</span><span className="piece-engraving">{side === 'enemy' ? '敵' : '将'}</span></span>
+export function PieceToken({ type, side = 'ally', abilities = [], shieldUsed = true, promoted = false, miniature = false }: { type: PieceType; side?: Side; abilities?: Ability[]; shieldUsed?: boolean; promoted?: boolean; miniature?: boolean }) {
+  const info = getPieceInfo({ type, promoted });
+  const isPromoted = promoted && (type === 'pawn' || type === 'rook');
+  return <span className={`piece-wrap ${side} ${isPromoted ? 'promoted' : ''} ${miniature ? 'miniature' : ''}`} aria-hidden="true">
+    <span className="piece"><span className="piece-character">{info.label}</span><span className="piece-engraving">{side === 'enemy' ? isPromoted ? '敵成' : '敵' : isPromoted ? '成' : '将'}</span></span>
     {abilities.length > 0 && <span className="piece-abilities">{abilities.map(a => <AbilityBadge key={a} ability={a} />)}</span>}
     {abilities.includes('iron') && !shieldUsed && <span className="shield-ring" />}
   </span>;

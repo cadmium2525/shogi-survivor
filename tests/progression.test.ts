@@ -4,7 +4,7 @@ import { getRewardChoices } from '../src/game/rewards.ts';
 import { getEnemies } from '../src/game/stages.ts';
 import { clearSave, loadRun, SAVE_KEY, saveRun } from '../src/game/storage.ts';
 import { legalMoves } from '../src/game/moves.ts';
-import { runBattle, stepBattle } from '../src/game/engine.ts';
+import { applyAction, createBattle, runBattle, stepBattle } from '../src/game/engine.ts';
 import type { GameState, Piece, RunState } from '../src/game/types.ts';
 
 function win(run: RunState): RunState {
@@ -12,6 +12,34 @@ function win(run: RunState): RunState {
   const battle: GameState = { ...fighting.battle!, phase: 'finished', winner: 'ally', endReason: 'kingCaptured',
     pieces: fighting.battle!.pieces.filter((piece) => !(piece.side === 'enemy' && piece.type === 'king')) };
   return finishBattle(fighting, battle);
+}
+function promotionBattle(type: 'pawn' | 'rook' = 'pawn'): GameState {
+  const piece = (id: string, type: Piece['type'], side: Piece['side'], x: number, y: number): Piece => ({
+    id, type, side, position: { x, y }, abilities: [], shieldUsed: false, isSummoned: false,
+  });
+  return applyAction(createBattle([
+    piece('ally-1', 'king', 'ally', 0, 4), piece('ally-2', type, 'ally', 2, 1),
+  ], [piece('enemy-1-1', 'king', 'enemy', 4, 0), piece('enemy-1-2', 'pawn', 'enemy', 4, 1)]),
+  { type: 'move', pieceId: 'ally-2', to: { x: 2, y: 0 } });
+}
+function legacyLastRankRun(): RunState {
+  const run = startBattle(createRun());
+  const piece = (id: string, type: Piece['type'], side: Piece['side'], x: number, y: number): Piece => ({
+    id, type, side, position: { x, y }, abilities: [], shieldUsed: false, isSummoned: false,
+  });
+  run.battle!.pieces = [
+    piece('ally-1', 'king', 'ally', 0, 3),
+    { ...piece('ally-2', 'pawn', 'ally', 1, 0), abilities: ['iron', 'combo'], shieldUsed: true },
+    piece('enemy-1-1', 'king', 'enemy', 4, 0),
+    { ...piece('enemy-1-2', 'pawn', 'enemy', 3, 4), abilities: ['split'] },
+    piece('legacy-other', 'pawn', 'ally', 2, 2),
+    piece('legacy-rook', 'rook', 'ally', 2, 0),
+    { ...piece('new-false', 'pawn', 'ally', 3, 0), promoted: false },
+  ];
+  run.battle!.halfTurn = 12;
+  run.battle!.eventLog = [{ type: 'moved', side: 'ally', halfTurn: 12, pieceId: 'ally-1',
+    from: { x: 0, y: 4 }, to: { x: 0, y: 3 }, text: '移行前の行動記録。' }];
+  return run;
 }
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -127,6 +155,22 @@ describe('fixed five-stage progression', () => {
     expect(finishBattle(reward, end)).toBe(reward);
     expect(finishBattle(fighting, fighting.battle!)).toBe(fighting);
   });
+  it('keeps promotion within one battle and restores the base inventory next encounter', () => {
+    const initial = createRun();
+    const inventory = structuredClone(initial.inventory);
+    const promoted = promotionBattle();
+    expect(promoted.pieces.find((piece) => piece.id === 'ally-2')?.promoted).toBe(true);
+    const fighting = { ...startBattle(initial), battle: promoted };
+    const finished: GameState = { ...promoted, phase: 'finished', winner: 'ally', endReason: 'kingCaptured',
+      pieces: promoted.pieces.filter((piece) => !(piece.side === 'enemy' && piece.type === 'king')) };
+    const reward = finishBattle(fighting, finished);
+    expect(reward.inventory).toEqual(inventory);
+    expect(reward.inventory.every((piece) => !('promoted' in piece))).toBe(true);
+    const next = startBattle(selectReward(reward, reward.rewardChoices[2].id));
+    expect(next.battle!.pieces.filter((piece) => piece.side === 'ally').every((piece) => !piece.promoted)).toBe(true);
+    expect(next.battle!.pieces.find((piece) => piece.id === 'ally-2')?.type).toBe('pawn');
+    expect(initial.inventory).toEqual(inventory);
+  });
   it('ends losses, move limits and mutual passes without rewards', () => {
     const run = startBattle(createRun());
     for (const reason of ['kingCaptured', 'turnLimit', 'mutualPass'] as const) {
@@ -186,6 +230,73 @@ class MemoryStorage implements Storage {
   setItem(key: string, value: string): void { this.data.set(key, value); }
 }
 describe('versioned defensive save', () => {
+  it.each(['pawn', 'rook'] as const)('restores promoted %s and events, then continues deterministically', (type) => {
+    vi.stubGlobal('localStorage', new MemoryStorage());
+    const run = { ...startBattle(createRun()), battle: promotionBattle(type) };
+    expect(run.battle.eventLog.some((event) => event.type === 'promoted')).toBe(true);
+    expect(saveRun(run)).toBe(true);
+    const restored = loadRun();
+    expect(restored).toEqual(run);
+    expect(restored!.battle!.pieces.find((piece) => piece.id === 'ally-2')?.promoted).toBe(true);
+    expect(stepBattle(restored!.battle!)).toEqual(stepBattle(run.battle));
+    expect(runBattle(restored!.battle!)).toEqual(runBattle(run.battle));
+  });
+  it('keeps version-two saves without promoted fields backward compatible', () => {
+    const storage = new MemoryStorage(); vi.stubGlobal('localStorage', storage);
+    const legacy = startBattle(createRun());
+    legacy.battle!.pieces.forEach((piece) => { delete piece.promoted; });
+    storage.setItem(SAVE_KEY, JSON.stringify(legacy));
+    const restored = loadRun();
+    expect(restored).toEqual(legacy);
+    expect(restored!.battle!.pieces.every((piece) => piece.promoted === undefined)).toBe(true);
+    expect(stepBattle(restored!.battle!)).toEqual(stepBattle(legacy.battle!));
+    legacy.battle!.pieces.forEach((piece) => { piece.promoted = false; });
+    expect(saveRun(legacy)).toBe(true);
+    expect(loadRun()).toEqual(legacy);
+  });
+  it('migrates only legacy last-rank pawns once without advancing or rewriting the stored input', () => {
+    const storage = new MemoryStorage(); vi.stubGlobal('localStorage', storage);
+    const legacy = legacyLastRankRun();
+    const raw = JSON.stringify(legacy);
+    storage.setItem(SAVE_KEY, raw);
+    const migrated = loadRun()!;
+    expect(migrated).not.toBeNull();
+    expect(storage.getItem(SAVE_KEY)).toBe(raw);
+    expect(legacy.battle!.pieces[1].promoted).toBeUndefined();
+    expect(migrated.battle!.halfTurn).toBe(12);
+    expect(migrated.inventory).toEqual(legacy.inventory);
+    expect(migrated.battle!.activeSide).toBe(legacy.battle!.activeSide);
+    for (const original of legacy.battle!.pieces) {
+      const restored = migrated.battle!.pieces.find((piece) => piece.id === original.id)!;
+      expect(restored).toEqual(original.id === 'ally-2' || original.id === 'enemy-1-2'
+        ? { ...original, promoted: true } : original);
+    }
+    const events = migrated.battle!.eventLog.filter((event) => event.type === 'promoted');
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.pieceId)).toEqual(['ally-2', 'enemy-1-2']);
+    expect(events.every((event) => event.halfTurn === 12 && event.reason?.includes('旧仕様'))).toBe(true);
+    expect(migrated.battle!.eventLog[0]).toEqual(legacy.battle!.eventLog[0]);
+    expect(loadRun()).toEqual(migrated);
+    expect(saveRun(migrated)).toBe(true);
+    const reloaded = loadRun()!;
+    expect(reloaded).toEqual(migrated);
+    expect(saveRun(reloaded)).toBe(true);
+    expect(loadRun()).toEqual(migrated);
+    expect(stepBattle(reloaded.battle!)).toEqual(stepBattle(migrated.battle!));
+  });
+  it('leaves finished legacy battles and their recorded results unchanged', () => {
+    const storage = new MemoryStorage(); vi.stubGlobal('localStorage', storage);
+    const ongoing = legacyLastRankRun();
+    const finished: GameState = { ...ongoing.battle!, phase: 'finished', winner: 'ally', endReason: 'kingCaptured',
+      pieces: ongoing.battle!.pieces.filter((piece) => !(piece.side === 'enemy' && piece.type === 'king')) };
+    for (const run of [{ ...ongoing, battle: finished }, finishBattle(ongoing, finished)]) {
+      const raw = JSON.stringify(run);
+      storage.setItem(SAVE_KEY, raw);
+      expect(loadRun()).toEqual(run);
+      expect(storage.getItem(SAVE_KEY)).toBe(raw);
+      expect(loadRun()!.battle!.eventLog.some((event) => event.type === 'promoted')).toBe(false);
+    }
+  });
   it('round trips preparation, battle, every reward and final seventh piece', () => {
     vi.stubGlobal('localStorage', new MemoryStorage());
     let run = createRun();
@@ -221,6 +332,14 @@ describe('versioned defensive save', () => {
     const duplicateAbility = createRun(); duplicateAbility.inventory[1].abilities = ['iron', 'iron']; invalid.push(duplicateAbility);
     const collision = startBattle(createRun()); collision.battle!.pieces[1].position = { ...collision.battle!.pieces[0].position }; invalid.push(collision);
     const limit = startBattle(createRun()); limit.battle!.halfTurn = 81; invalid.push(limit);
+    for (const promoted of ['yes', 1, null, true]) {
+      const badFlag = startBattle(createRun());
+      Object.assign(badFlag.battle!.pieces[0], { promoted }); invalid.push(badFlag);
+    }
+    const promotedGold = startBattle(createRun());
+    Object.assign(promotedGold.battle!.pieces[1], { type: 'gold', promoted: true }); invalid.push(promotedGold);
+    const permanentPromotion = createRun();
+    Object.assign(permanentPromotion.inventory[1], { promoted: true }); invalid.push(permanentPromotion);
     for (const value of invalid) {
       storage.setItem(SAVE_KEY, JSON.stringify(value)); expect(loadRun()).toBeNull(); expect(saveRun(value as RunState)).toBe(false);
     }

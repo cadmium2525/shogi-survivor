@@ -1,4 +1,4 @@
-import { PIECES } from './catalog.ts';
+import { getPieceInfo } from './catalog.ts';
 import { hasShield, otherSide, resolveMove } from './effects.ts';
 import { legalMoves, samePosition } from './moves.ts';
 import type { Action, ActionDecision, GameState, Piece, Position, Side } from './types.ts';
@@ -6,7 +6,7 @@ import type { Action, ActionDecision, GameState, Piece, Position, Side } from '.
 const compareId = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 const distance = (a: Position, b: Position): number => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 const material = (pieces: Piece[], side: Side): number => pieces.filter(piece => piece.side === side)
-  .reduce((sum, piece) => sum + (piece.type === 'king' ? 0 : PIECES[piece.type].value) * 200 + piece.abilities.length * 25, 0);
+  .reduce((sum, piece) => sum + (piece.type === 'king' ? 0 : getPieceInfo(piece).value) * 200 + piece.abilities.length * 25, 0);
 
 /** Sorted legal actions across the whole army, with a forced pass only if all are blocked. */
 export function enumerateActions(state: GameState): Action[] {
@@ -24,7 +24,13 @@ function positionValue(pieces: Piece[], side: Side): number {
   for (const piece of pieces.filter(candidate => candidate.side === side)) {
     const advance = side === 'ally' ? 4 - piece.position.y : piece.position.y;
     switch (piece.type) {
-      case 'pawn': value += advance * 18 - Math.abs(piece.position.x - 2) * 3; break;
+      case 'pawn':
+        if (piece.promoted) {
+          // A tokin has reached the front: use its new sideways/backward moves to close a net.
+          if (enemyKing) value -= distance(piece.position, enemyKing.position) * 12;
+          value += legalMoves(piece, pieces).length * 2;
+        } else value += advance * 18 - Math.abs(piece.position.x - 2) * 3;
+        break;
       case 'gold':
         if (king) value -= distance(piece.position, king.position) * 10;
         value += advance * 5;
@@ -42,6 +48,19 @@ function positionValue(pieces: Piece[], side: Side): number {
         break;
     }
     if (enemyKing && piece.type !== 'king') value -= distance(piece.position, enemyKing.position) * 5;
+  }
+  if (enemyKing) {
+    let safeEscapes = 0;
+    for (const to of legalMoves(enemyKing, pieces)) {
+      const destination = pieces.find(piece => samePosition(piece.position, to));
+      // Capturing our king wins immediately, so a defended king square is still a valid escape.
+      if (destination?.side === side && destination.type === 'king') { safeEscapes++; continue; }
+      const after = pieces.filter(piece => piece.id !== destination?.id).map(piece => piece.id === enemyKing.id
+        ? { ...piece, position: to } : piece);
+      const attacked = after.some(piece => piece.side === side && legalMoves(piece, after).some(square => samePosition(square, to)));
+      if (!attacked) safeEscapes++;
+    }
+    value -= safeEscapes * 30;
   }
   return value;
 }
@@ -100,7 +119,7 @@ export function chooseAction(state: GameState): ActionDecision {
     if (captureRisk.kingRisk) score -= 100_000_000;
     if (initialKingRisk && !captureRisk.kingRisk) score += 100_000;
     if (captureRisk.shieldRisk) score -= 200;
-    if (target && hasShield(target)) score += target.type === 'king' ? 4_000 : PIECES[target.type].value * 30;
+    if (target && hasShield(target)) score += target.type === 'king' ? 4_000 : getPieceInfo(target).value * 30;
     if (resolution.captured && moving.abilities.includes('combo') && !state.pendingExtraAction) score += 120;
     const visits = state.eventLog.filter(event => event.pieceId === moving.id
       && (event.type === 'moved' || event.type === 'captured') && event.to && samePosition(event.to, action.to)).length;
@@ -108,10 +127,12 @@ export function chooseAction(state: GameState): ActionDecision {
     const previous = [...state.eventLog].reverse().find(event => event.pieceId === moving.id
       && (event.type === 'moved' || event.type === 'captured'));
     if (previous?.from && samePosition(previous.from, action.to)) score -= 10;
-    const role = moving.type === 'king' ? '王の安全' : moving.type === 'gold' ? '金の護衛'
-      : moving.type === 'rook' ? '飛の射線' : '歩の前進';
+    const role = moving.type === 'king' ? '王の安全' : moving.type === 'gold' ? `${getPieceInfo(moving).label}の護衛`
+      : moving.type === 'pawn' && moving.promoted ? 'と金の追い込み'
+      : moving.type === 'rook' ? `${getPieceInfo(moving).label}の射線` : '歩の前進';
     const reasons = [captureRisk.kingRisk ? '自王が直後に捕獲される危険' : initialKingRisk ? '自王への脅威を除去' : '自王の即時捕獲を回避',
-      resolution.captured ? `${PIECES[resolution.captured.type].label}を捕獲` : target && hasShield(target) ? '鉄壁を消費させる' : role,
+      resolution.captured ? `${getPieceInfo(resolution.captured).label}を捕獲` : target && hasShield(target) ? '鉄壁を消費させる' : role,
+      ...(!moving.promoted && resolution.actor.promoted ? [`${getPieceInfo(resolution.actor).name}へ成る`] : []),
       `戦力変化${gain >= 0 ? '+' : ''}${gain}・位置${position >= 0 ? '+' : ''}${position}・相手の最良捕獲${Math.round(captureRisk.value)}`];
     const decision: ActionDecision = { action, score: Math.round(score * 100) / 100, reason: reasons.join('／') };
     // Actions are already sorted by ID, then y, then x. Equal scores keep the first.

@@ -1,12 +1,17 @@
 # Word仕様と実装・検証の対応
 
-参照仕様は「ゲーム企画書 MVP 0.1」と「Codex実装指示書」。ゲーム処理を `src/game/`、表示と操作をReactコンポーネントへ分離している。以下はコードとテストケースの対応表で、テスト実行の成否は [検証記録](TESTING.md) に記録する。
+参照仕様は「ゲーム企画書 MVP 0.1」と「Codex実装指示書」。追加依頼による自動の成りは、Word原案の「成り対象外」を上書きする変更として扱う。ゲーム処理を `src/game/`、表示と操作をReactコンポーネントへ分離している。以下はコードとテストケースの対応表で、テスト実行の成否は [検証記録](TESTING.md) に記録する。
 
 | 仕様の要件 | 実装 | 対応する検証 |
 | --- | --- | --- |
 | TypeScript + React + Vite、Vitest | `package.json`、`src/App.tsx`、`src/main.tsx`、`vite.config.ts` | `npm test`、`npm run build` |
 | 5×5盤、王・歩・金・飛 | `src/game/types.ts`、`catalog.ts`、`moves.ts` | `tests/engine.test.ts`: `5×5 traditional movement` の全3ケース |
 | 盤外・味方重複不可、前方の陣営差、飛車の遮蔽と捕獲 | `src/game/moves.ts`: `legalMoves` | `keeps all four types on board and excludes friendly squares`、`reverses pawn and gold forward directions between armies`、`rook stops before allies and after the first enemy without jumping` |
+| 追加依頼：最奥1段で歩→と金、飛→龍王、王・金は変化なし | `src/game/types.ts`、`catalog.ts`、`moves.ts`、`effects.ts` | `tests/promotion.test.ts`: `uses only the opponent outermost rank as the promotion zone`、`moves a promoted pawn exactly like a gold for either side`、`adds exactly one diagonal step to a dragon while keeping rook blockers`、`does not promote moves outside the zone or king and gold moves into it` |
+| 成りは自動・追加行動なし、移動元/先の敵陣で発動、鉄壁で移動なしなら不発 | `src/game/effects.ts`、`engine.ts` | `auto-promotes an allied pawn entering the zone without spending another half-turn`、`auto-promotes an enemy pawn entering its opposite zone`、`promotes a rook moving from the zone as well as into the zone`、`does not promote shield-blocked attacks even when the destination or origin is in zone` |
+| 召喚/反転で行き止まりの歩は強制成り、反転でも既存の成りと盾消費を維持 | `src/game/effects.ts` | `force-promotes a pawn split on its own last rank immediately after summoning`、`uses the same mandatory split-pawn promotion at the enemy bottom rank`、`force-promotes a reflected pawn stranded on its new side last rank without restoring shields`、`retains existing tokin and dragon promotion across reflection without emitting promotion again` |
+| 成りをAI評価・理由へ反映、決定的な再生、成り→分裂→連撃と80半手目の王捕獲 | `src/game/ai.ts`、`effects.ts`、`engine.ts` | `values safe promotion ahead of an ordinary pawn capture and explains the choice`、`keeps immediate king capture above promotion value`、`prioritizes escaping a direct king capture over an otherwise valuable promotion`、`recognizes a dragon diagonal threat and its promoted capture label`、`orders capture then promotion then split then capture-only extra action`、`still resolves promotion before a king-capture victory on half-turn 80`、`replays promotion results and event ordering without mutating an initial state` |
+| と金は敵王へ接近、通常金は護衛を維持、敵王の安全な逃げ先を抑制 | `src/game/ai.ts`: `positionValue` | 初戦の下2段の王＋歩の重複なし90配置を成り前と比較し、新結果の再実行一致を確認。配置・結果・集計は [検証記録](TESTING.md) に記録 |
 | 王と歩で開始、下2段、王必須、配置・解除・交換、出撃6枚・控え | `src/game/progression.ts`: `createRun`、`placePiece`、`autoArrange` | `tests/progression.test.ts`: 初期編成、配置交換、最終7枚と控え、自動配置の各ケース |
 | 全5戦の固定敵、事前公開、初手の王即死を回避 | `src/game/stages.ts`、`src/App.tsx`、`src/components/Board.tsx` | `uses exactly the five prescribed fixed enemy compositions`、`protects both initial kings, including every possible home-rank rook placement` |
 | 味方先手、通常は陣営1枚ずつ交互に行動 | `src/game/engine.ts`: `createBattle`、`applyAction` | `moves only one army piece and alternates normally` |
@@ -21,7 +26,7 @@
 | 反転は1スナップショット、連鎖なし、上→下・左→右、盤上8枚まで | `src/game/effects.ts`: 対象収集→重複除去→y/x順→上限適用→反転 | `never chains a second scan from a just-converted piece`、`applies the eight-piece cap in top-to-bottom left-to-right target order`、`prioritizes the upper target before a lower target with a smaller x coordinate` |
 | 反転後も能力と盾消費を保持、召喚IDを再利用しない | `src/game/effects.ts`、`engine.ts` | `preserves a consumed iron shield when a piece changes sides`、`never reuses an initial summoned-looking ID even after capturing that piece` |
 | 反転は行動側だけに適用し、敵にも同じルール | `src/game/effects.ts`: `actor.side` に対する処理 | `enables the same rule for the enemy army` |
-| 捕獲→分裂→反転→勝敗→連撃、鉄壁時の分裂・連撃不発 | `src/game/effects.ts`、`engine.ts` | `scans after iron blocks but does not grant split or combo`、`orders king capture, split, flip, victory; no extra action follows victory` |
+| 移動後の成り、捕獲→分裂→反転→勝敗→連撃、鉄壁時の分裂・連撃不発 | `src/game/effects.ts`、`engine.ts` | 基本イベント順と、成りイベントを含む能力相互作用の追加テスト |
 | 王捕獲最優先、自王保護、相手の次の最良捕獲、鉄壁、駒別の位置価値 | `src/game/ai.ts`: `bestOpponentCapture`、`positionValue`、`chooseAction` | `selects any army piece and always prioritizes immediate king capture`、`removes immediate king capture risk when a safe escape exists`。個別重みはコードレビューで確認 |
 | 決定的な同点解決、同じ結果とログ、純粋関数・不変更新 | `src/game/ai.ts`、`engine.ts`、`effects.ts` | `sorts candidate ties by ID then y then x independently of array order`、`reproduces all decisions, outcomes, and Japanese logs from the same state`、`immutably clones positions, ability arrays, and cumulative event history` |
 | 毎勝利3候補から駒1枚、王を除外、重複なし、第3戦勝利以降は能力付き | `src/game/rewards.ts`、`progression.ts` | `offers three distinct piece types, with fixed abilities from third clear onwards`、`requires a new piece after every win including boss, ending with seven owned pieces` |
@@ -29,8 +34,8 @@
 | 最初から全5戦を遊んでクリア、敗北と再挑戦 | `src/App.tsx`、`src/components/Preparation.tsx`、`Battle.tsx`、`Reward.tsx`、`Result.tsx` | `completes all five actual AI battles, mandatory boss reward and identical replay`、ブラウザスモークテスト |
 | 危険マス、AIの判断理由、能力ログ、停止・1手送り・速度、基本キーボード | `src/App.tsx`、`src/components/Board.tsx`、`Battle.tsx`、`Shared.tsx` | ブラウザスモークテスト。陣営を敵/味方の文字と駒の向きでも区別 |
 | 無料・バックエンド不要・GitHub Pagesのスマートフォン利用 | `vite.config.ts` の相対base、`.github/workflows/deploy.yml`、`src/style.css` | 本番ビルド、サブパス配信、狭い画面のブラウザ検証。実Pages・実機は公開後確認 |
-| 追加機能：同じブラウザ内の一時保存、停止状態で復元 | `src/game/storage.ts`、`src/App.tsx` | `versioned defensive save` の全3ケース、全5戦リプレイ中の停止状態保存・復元、ブラウザ再読込 |
+| 成りは戦闘限り、同じブラウザ内の一時保存で状態復元、旧v2保存との互換 | `src/game/progression.ts`、`storage.ts`、`src/App.tsx` | `keeps promotion within one battle and restores the base inventory next encounter`、`restores promoted %s and events, then continues deterministically`、`keeps version-two saves without promoted fields backward compatible`、全5戦リプレイ、ブラウザ再読込 |
 
 ## 仕様上の仮定
 
-具体的な初期座標・報酬の能力割り当て・AIの評価重みは固定データで定義する。所持駒の永久離脱は採用せず、召喚・反転は戦闘内に限定する。能力の付け替え・合成やメタ成長は導入しない。スマートフォン向けの途中保存だけを小さな追加機能として扱う。
+具体的な初期座標・報酬の能力割り当て・AIの評価重みは固定データで定義する。所持駒の永久離脱は採用せず、成り・召喚・反転は戦闘内に限定する。能力の付け替え・合成やメタ成長は導入しない。ユーザーの追加依頼による自動の成りと、スマートフォン向けの途中保存をWord版MVPへの追加として扱う。80半手・双方連続パスの敗北条件は維持し、停滞の完全解消は保証しない。
